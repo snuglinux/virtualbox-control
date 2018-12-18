@@ -1,0 +1,105 @@
+#!/bin/bash
+
+BASE_NAME=`basename "$0"`
+CURRENT_VERSION=0.0.0
+INSTALL_PREFIX=/usr
+PO_DIR=${INSTALL_PREFIX}/share/${BASE_NAME}
+lang=`echo $LANG | cut -b 1,2`
+
+#=======================================
+save_log(){
+  local var_str=$1
+  echo "$(date +%k:%M:%S): ${var_str}" | tee -a ${PATH_LOG}/$(date +%Y:%m:%d)-${BASE_NAME}.log
+}
+
+#Loading message file
+if [ -f "${PO_DIR}/${BASE_NAME}.messages" ]; then
+   . "${PO_DIR}/${BASE_NAME}.messages"
+else
+  case $lang in
+       ru) echo -e "\e[31mОшибка:\e[0m не найден файл ${BASE_NAME}.messages в '${PO_DIR}'!!!" | tee -a ${PATH_LOG}/$(date +%Y:%m:%d)-${BASE_NAME}.log;;
+       uk) echo -e "\e[31mПомилка:\e[0m не знайдений файл ${BASE_NAME}.messages у '${PO_DIR}'!!!" | tee -a ${PATH_LOG}/$(date +%Y:%m:%d)-${BASE_NAME}.log;;
+       *)  echo -e "\e[31mError:\e[0m file ${BASE_NAME}.messages not found in '${PO_DIR}'!!!" | tee -a ${PATH_LOG}/$(date +%Y:%m:%d)-${BASE_NAME}.log;;
+  esac
+  exit 1
+fi
+
+if ! [ -f /etc/virtualbox-control/${BASE_NAME}.conf ]; then
+   show_message NOT_FOUND_CONFIG "/etc/virtualbox-control/${BASE_NAME}.conf"
+   exit 1;
+else
+  source /etc/virtualbox-control/${BASE_NAME}.conf
+fi
+
+if [ -z "${lang}" ]; then
+   lang=en
+fi
+
+
+#========================
+set_options(){
+  EVENT=""
+  PARAM="$1"
+  if [ -z "${PARAM}" ]; then
+     PARAM="-h"
+  fi
+  while [ ! -z "${PARAM}" ]; do
+        case ${PARAM} in
+             -v)
+                show_message CURRENT_VERSION
+                exit 0
+                ;;
+             -h|--help)
+                show_message SHOW_USAGE
+                exit 0
+                ;;
+             -shutdown-all-vm)
+                EVENT="-shutdown-all-vm"
+                break
+                ;;
+             *) show_message UNKNOWN_ARG ${PARAM}
+                exit 1
+               ;;
+        esac
+        shift
+  done
+}
+
+#========================
+all_list_vbox_acpipower() {
+  LIST_VBOX=`su -c 'VBoxManage list runningvms' -s /bin/bash ${VBOX_USER}`
+  local VBOX_NAME=""
+  local VBOX_ID=""
+  LIST_VBOX=`echo "${LIST_VBOX}" | tr "\n" "|"`
+  IFS_OLD=$IFS
+  IFS='|'
+  for LINE in ${LIST_VBOX}; do
+     VBOX_NAME=`echo "${LINE} " | awk '{print $1}'`;
+     VBOX_ID=`echo "${LINE} " | awk '{print $2}'`;
+     if [ -n "$VBOX_ID" ]; then
+       `su -c "VBoxManage controlvm ${VBOX_ID} acpipowerbutton" -s /bin/bash ${VBOX_USER}`
+       show_message_log RUNNING_SHUTDOWN_COMMAND "$VBOX_NAME"
+     fi
+  done
+  local IFS=$IFS_OLD
+  local N=0
+  while [ "`su -c 'VBoxManage list runningvms' -s /bin/bash ${VBOX_USER}`" != "" ] ; do
+        let N=$N+1
+        echo -en "Waiting for virtual machines to shutdown $N\r"
+        sleep 1
+  done
+  show_message_log SHUTDOWN-VIRTUAL-MACHINES-COMPLETE
+}
+
+set_options $1
+
+if [ -f  /bin/sound-events ]; then
+   /bin/sound-events -shutdown-all-vm
+fi
+all_list_vbox_acpipower
+if [ "$?" = 1 ]; then
+   exit 1;
+fi
+if [ -f  /bin/sound-events ]; then
+   /bin/sound-events -shutdown-vm-complete
+fi
